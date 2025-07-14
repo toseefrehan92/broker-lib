@@ -297,6 +297,88 @@ await subscriptionManager.subscribe(
 );
 ```
 
+### Multiple Topic Subscriptions with Different Handlers
+
+You can subscribe to multiple topics with different handlers for each topic:
+
+```typescript
+import { TopicHandlerMapping } from 'broker-lib';
+
+// Define topic-handler mappings
+const topicMappings: TopicHandlerMapping[] = [
+  {
+    topic: 'user/events',
+    handler: (message) => {
+      console.log('User event:', message);
+      // Process user events
+    },
+    options: { qos: 1 }
+  },
+  {
+    topic: 'order/events',
+    handler: (message) => {
+      console.log('Order event:', message);
+      // Process order events
+    },
+    options: { qos: 2 }
+  },
+  {
+    topic: 'system/alerts',
+    handler: (message) => {
+      console.log('System alert:', message);
+      // Process system alerts
+    },
+    options: { qos: 1 }
+  }
+];
+
+// Subscribe to all topics with their respective handlers
+await subscriptionManager.subscribeMultiple(topicMappings);
+```
+
+### Same Handler for Multiple Topics
+
+You can also use the same handler for multiple related topics:
+
+```typescript
+const topics = ['logs/error', 'logs/warning', 'logs/info', 'logs/debug'];
+
+const logHandler = (message: any) => {
+  console.log('Log message:', message);
+  // Process all log messages the same way
+};
+
+await subscriptionManager.subscribeToTopics(topics, logHandler, { qos: 1 });
+```
+
+### Handler Management
+
+The `SubscriptionManager` provides methods to manage handlers:
+
+```typescript
+// Get all subscribed topics
+const topics = subscriptionManager.getSubscribedTopics();
+
+// Get handler for a specific topic
+const handler = subscriptionManager.getHandler('user/events');
+
+// Remove handler for a specific topic
+subscriptionManager.removeHandler('user/events');
+
+// Clear all handlers
+subscriptionManager.clearHandlers();
+```
+
+### TopicHandlerMapping Interface
+
+```typescript
+interface TopicHandlerMapping {
+  topic: string;                                    // Required: Topic to subscribe to
+  handler: SubscriptionCallback;                     // Required: Handler function for this topic
+  options?: Omit<SubscriptionOptions, 'topic'>;     // Optional: Subscription options
+}
+```
+
 ## Configuration
 
 ### How Broker Configurations are Passed

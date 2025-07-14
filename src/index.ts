@@ -25,6 +25,13 @@ export interface SubscriptionCallback {
   (message: any): void;
 }
 
+// New interface for topic-handler mapping
+export interface TopicHandlerMapping {
+  topic: string;
+  handler: SubscriptionCallback;
+  options?: Omit<SubscriptionOptions, 'topic'>;
+}
+
 // Environment configuration interface
 export interface BrokerEnvConfig {
   BROKER_TYPE?: string;
@@ -118,6 +125,7 @@ export function createBrokerManagerFromEnv(
 export class SubscriptionManager extends EventEmitter {
   private brokerManager: BrokerManager;
   private logger: Console;
+  private topicHandlers: Map<string, SubscriptionCallback> = new Map();
 
   constructor(brokerConfig: BrokerConfig, logger: Console = console) {
     super();
@@ -141,19 +149,29 @@ export class SubscriptionManager extends EventEmitter {
     await this.brokerManager.disconnect();
   }
 
+  // Single topic subscription (existing method)
   async subscribe(options: SubscriptionOptions, callback: SubscriptionCallback): Promise<void> {
     try {
       await this.ensureConnection();
 
-      // Set up message handler that parses JSON and calls the callback
+      // Store the handler for this topic
+      this.topicHandlers.set(options.topic, callback);
+
+      // Set up message handler that routes to the appropriate callback
       this.brokerManager.setMessageHandler((topic: string, message: Buffer) => {
         this.logger.log(`Received message on topic ${topic}: ${message.toString()}`);
-        try {
-          const parsedMessage = JSON.parse(message.toString());
-          callback(parsedMessage);
-        } catch (parseError) {
-          this.logger.warn('Failed to parse message as JSON, passing raw message');
-          callback(message.toString());
+        
+        const handler = this.topicHandlers.get(topic);
+        if (handler) {
+          try {
+            const parsedMessage = JSON.parse(message.toString());
+            handler(parsedMessage);
+          } catch (parseError) {
+            this.logger.warn('Failed to parse message as JSON, passing raw message');
+            handler(message.toString());
+          }
+        } else {
+          this.logger.warn(`No handler found for topic: ${topic}`);
         }
       });
 
@@ -184,6 +202,75 @@ export class SubscriptionManager extends EventEmitter {
     }
   }
 
+  // New method for multiple topic subscriptions with different handlers
+  async subscribeMultiple(mappings: TopicHandlerMapping[]): Promise<void> {
+    try {
+      await this.ensureConnection();
+
+      // Store all handlers
+      for (const mapping of mappings) {
+        this.topicHandlers.set(mapping.topic, mapping.handler);
+      }
+
+      // Set up message handler that routes to the appropriate callback
+      this.brokerManager.setMessageHandler((topic: string, message: Buffer) => {
+        this.logger.log(`Received message on topic ${topic}: ${message.toString()}`);
+        
+        const handler = this.topicHandlers.get(topic);
+        if (handler) {
+          try {
+            const parsedMessage = JSON.parse(message.toString());
+            handler(parsedMessage);
+          } catch (parseError) {
+            this.logger.warn('Failed to parse message as JSON, passing raw message');
+            handler(message.toString());
+          }
+        } else {
+          this.logger.warn(`No handler found for topic: ${topic}`);
+        }
+      });
+
+      // Subscribe to all topics
+      const topics = mappings.map(m => m.topic);
+      const defaultOptions: SubscribeOptions = {
+        qos: 1,
+        autoAck: true,
+      };
+
+      await this.brokerManager.subscribe(topics, undefined, defaultOptions);
+      
+      this.logger.log(`Subscribed to ${topics.length} topics: ${topics.join(', ')}`);
+    } catch (error) {
+      this.logger.error(`Failed to subscribe to topics: ${mappings.map(m => m.topic).join(', ')}`, error);
+
+      // Handle Kafka-specific subscription error
+      if (error instanceof Error && error.message.includes('Cannot subscribe to topic while consumer is running')) {
+        this.logger.warn(`Consumer is already running. Some topics may already be subscribed.`);
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  // Alternative method for subscribing with a single handler for all topics
+  async subscribeToTopics(topics: string[], callback: SubscriptionCallback, options?: Omit<SubscriptionOptions, 'topic'>): Promise<void> {
+    const mappings: TopicHandlerMapping[] = topics.map(topic => {
+      const mapping: TopicHandlerMapping = {
+        topic,
+        handler: callback,
+      };
+      
+      if (options) {
+        mapping.options = options;
+      }
+      
+      return mapping;
+    });
+
+    await this.subscribeMultiple(mappings);
+  }
+
   async publish(topic: string, message: any, options?: PublishOptions): Promise<void> {
     try {
       await this.ensureConnection();
@@ -201,6 +288,26 @@ export class SubscriptionManager extends EventEmitter {
     if (!this.brokerManager.isConnected()) {
       await this.brokerManager.connect();
     }
+  }
+
+  // Get all subscribed topics
+  getSubscribedTopics(): string[] {
+    return Array.from(this.topicHandlers.keys());
+  }
+
+  // Get handler for a specific topic
+  getHandler(topic: string): SubscriptionCallback | undefined {
+    return this.topicHandlers.get(topic);
+  }
+
+  // Remove handler for a specific topic
+  removeHandler(topic: string): boolean {
+    return this.topicHandlers.delete(topic);
+  }
+
+  // Clear all handlers
+  clearHandlers(): void {
+    this.topicHandlers.clear();
   }
 
   // Expose broker manager methods for advanced usage
