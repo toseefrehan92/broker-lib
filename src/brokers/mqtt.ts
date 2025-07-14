@@ -36,7 +36,10 @@ export class MqttBroker extends EventEmitter implements IBroker {
 
     this.client.on('error', (error) => {
       this.connected = false;
-      this.emit('error', error);
+      // Don't emit error for connection-related issues that will be handled by reconnection
+      if (!this.isConnectionError(error)) {
+        this.emit('error', error);
+      }
     });
 
     this.client.on('close', () => {
@@ -142,5 +145,23 @@ export class MqttBroker extends EventEmitter implements IBroker {
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  private isConnectionError(error: any): boolean {
+    const errorMessage = error?.message || '';
+    const connectionErrors = [
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'ENOTFOUND',
+      'ETIMEDOUT',
+      'connection lost',
+      'connection closed',
+      'network error',
+      'socket error'
+    ];
+    
+    return connectionErrors.some(connError => 
+      errorMessage.toLowerCase().includes(connError.toLowerCase())
+    );
   }
 }

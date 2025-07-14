@@ -263,23 +263,31 @@ const broker = new BrokerManager({
 
 ## Connection Management
 
-The `BrokerManager` now supports explicit connection management with event-driven state tracking.
+The `BrokerManager` now supports robust connection management with automatic reconnection, exponential backoff, and graceful error handling.
 
-### Explicit Connection Management
+### Robust Reconnection with Network Resilience
 
 ```typescript
 import { BrokerManager } from 'broker-lib';
 
 const broker = new BrokerManager({
-  brokerType: 'KAFKA',
-  kafka: {
+  brokerType: 'MQTT',
+  mqtt: {
+    url: 'mqtt://broker.hivemq.com',
     clientId: 'my-app',
-    brokers: ['localhost:9092'],
-    groupId: 'my-group',
   },
 });
 
-// Set up event listeners for connection state
+// Configure reconnection settings
+broker.setReconnectionConfig({
+  enabled: true,
+  maxAttempts: 10,
+  initialDelay: 1000,
+  maxDelay: 30000,
+  backoffMultiplier: 2,
+});
+
+// Set up comprehensive event listeners
 broker.on('connect', () => {
   console.log('✅ Connected to broker');
 });
@@ -296,14 +304,18 @@ broker.on('connecting', () => {
   console.log('🔄 Connecting to broker...');
 });
 
+broker.on('reconnect', () => {
+  console.log('🔄 Reconnected successfully');
+});
+
+broker.on('reconnect_failed', (error) => {
+  console.log('💥 Reconnection failed:', error?.message);
+});
+
 // Connect explicitly
 await broker.connect();
 
-// Check connection state
-console.log('Connection state:', broker.getConnectionState()); // 'connected'
-console.log('Is connected:', broker.isConnected()); // true
-
-// Publish and subscribe (connection is guaranteed)
+// Operations are automatically retried on connection issues
 await broker.publish('my-topic', 'Hello World!');
 await broker.subscribe(['my-topic'], (topic, message) => {
   console.log(`Received: ${message.toString()}`);
@@ -312,6 +324,14 @@ await broker.subscribe(['my-topic'], (topic, message) => {
 // Disconnect when done
 await broker.disconnect();
 ```
+
+### Key Features
+
+- **Automatic Reconnection**: Handles network disconnections (`ECONNRESET`, `ECONNREFUSED`, etc.) automatically
+- **Exponential Backoff**: Smart retry strategy with configurable delays
+- **Operation Queuing**: Failed operations are queued and retried after reconnection
+- **Graceful Error Handling**: Connection errors don't crash your application
+- **Event-Driven**: Comprehensive event system for monitoring connection state
 
 ### Connection States
 
@@ -417,6 +437,94 @@ await broker.subscribe(['my-topic'], (topic, message) => {
 await broker.publish('my-topic', 'Hello PubSub!');
 ```
 
+## Broker-Specific Behavior
+
+### Kafka Behavior
+
+Kafka has some unique characteristics compared to other brokers:
+
+1. **Consumer Lifecycle**: Kafka consumers start consuming messages immediately when `consumer.run()` is called and continue until disconnected. The broker-lib manages this lifecycle automatically.
+
+2. **Multiple Subscriptions**: Unlike MQTT, Kafka consumers can subscribe to multiple topics without restarting the consumer. The library handles this by:
+   - Only calling `consumer.run()` once
+   - Adding new topics to the existing consumer via `consumer.subscribe()`
+   - Managing a single message handler for all subscribed topics
+
+3. **Consumer Groups**: Kafka uses consumer groups for load balancing and fault tolerance. Messages are distributed among consumers in the same group.
+
+4. **Message Ordering**: Messages within a partition are guaranteed to be in order, but messages across partitions may arrive out of order.
+
+**Example - Multiple Kafka Subscriptions:**
+```typescript
+const broker = new BrokerManager({
+  brokerType: 'KAFKA',
+  kafka: {
+    clientId: 'my-app',
+    brokers: ['localhost:9092'],
+    groupId: 'my-group',
+  },
+});
+
+await broker.connect();
+
+// First subscription - starts the consumer
+await broker.subscribe(['topic1'], (topic, message) => {
+  console.log(`Topic1: ${message.toString()}`);
+});
+
+// Second subscription - adds to existing consumer (no "consumer already running" error)
+await broker.subscribe(['topic2'], (topic, message) => {
+  console.log(`Topic2: ${message.toString()}`);
+});
+
+// Third subscription - also adds to existing consumer
+await broker.subscribe(['topic3'], (topic, message) => {
+  console.log(`Topic3: ${message.toString()}`);
+});
+```
+
+### MQTT Behavior
+
+MQTT has a simpler subscription model:
+
+1. **Global Message Handler**: MQTT uses a single message handler for all subscribed topics, set up once when the first subscription is made.
+
+2. **Topic Subscriptions**: Each call to `subscribe()` adds topics to the existing subscription list.
+
+3. **QoS Levels**: MQTT supports different Quality of Service levels (0, 1, 2) for message delivery guarantees.
+
+**Example - Multiple MQTT Subscriptions:**
+```typescript
+const broker = new BrokerManager({
+  brokerType: 'MQTT',
+  mqtt: {
+    url: 'mqtt://broker.hivemq.com',
+  },
+});
+
+await broker.connect();
+
+// First subscription - sets up the message handler
+await broker.subscribe(['topic1'], (topic, message) => {
+  console.log(`Topic1: ${message.toString()}`);
+});
+
+// Second subscription - adds to existing handler
+await broker.subscribe(['topic2'], (topic, message) => {
+  console.log(`Topic2: ${message.toString()}`);
+});
+```
+
+### GCP Pub/Sub Behavior
+
+Google Cloud Pub/Sub has its own characteristics:
+
+1. **Subscription Management**: Pub/Sub uses subscriptions that are separate from the client connection.
+
+2. **Message Acknowledgment**: Messages must be explicitly acknowledged to prevent redelivery.
+
+3. **Ordering**: Pub/Sub supports ordered message delivery when configured.
+
 ## API Reference
 
 ### BrokerManager
@@ -449,6 +557,8 @@ interface BrokerConfig {
 - `reconnect(): Promise<void>` - Disconnect and reconnect to the broker
 - `isConnected(): boolean` - Check if currently connected
 - `getConnectionState(): 'disconnected' | 'connecting' | 'connected' | 'error'` - Get current connection state
+- `getReconnectAttempts(): number` - Get number of reconnection attempts
+- `setReconnectionConfig(config: Partial<ReconnectionConfig>): void` - Configure reconnection behavior
 - `getBrokerType(): BrokerType`
 - `setMessageHandler(handler: MessageHandler): void`
 
@@ -462,6 +572,18 @@ The `BrokerManager` extends `EventEmitter` and emits the following events:
 - `'connecting'` - Emitted when attempting to connect
 - `'reconnect'` - Emitted when reconnected (MQTT only)
 - `'reconnect_failed'` - Emitted when reconnection fails (MQTT only)
+
+#### ReconnectionConfig
+
+```typescript
+interface ReconnectionConfig {
+  enabled: boolean;        // Enable/disable automatic reconnection
+  maxAttempts: number;     // Maximum reconnection attempts
+  initialDelay: number;    // Initial delay in milliseconds
+  maxDelay: number;        // Maximum delay in milliseconds
+  backoffMultiplier: number; // Exponential backoff multiplier
+}
+```
 
 ### Configuration Interfaces
 

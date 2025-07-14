@@ -11,6 +11,9 @@ export class KafkaBroker extends EventEmitter implements IBroker {
   private connected = false;
   private producerConnected = false;
   private consumerConnected = false;
+  private consumerRunning = false;
+  private subscribedTopics = new Set<string>();
+  private messageHandler: MessageHandler | undefined;
 
   constructor(config: KafkaConfig) {
     super();
@@ -18,6 +21,8 @@ export class KafkaBroker extends EventEmitter implements IBroker {
     const kafkaConfig: KafkaJSConfig = {
       clientId: config.clientId,
       brokers: config.brokers,
+      // Optionally, you can set logLevel here for debugging
+      // logLevel: logLevel.INFO,
     };
 
     if (config.ssl) {
@@ -69,6 +74,8 @@ export class KafkaBroker extends EventEmitter implements IBroker {
       this.emit('connect');
     } catch (error) {
       this.connected = false;
+      this.producerConnected = false;
+      this.consumerConnected = false;
       this.emit('error', error);
       throw new Error(`Failed to connect to Kafka: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -102,6 +109,20 @@ export class KafkaBroker extends EventEmitter implements IBroker {
         messages: [messageObj],
       });
     } catch (error) {
+      // Check if it's a connection-related error
+      if (error instanceof Error && (
+        error.message.includes('ECONNRESET') ||
+        error.message.includes('ENOTFOUND') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('Connection closed')
+      )) {
+        this.connected = false;
+        this.producerConnected = false;
+        this.consumerConnected = false;
+        this.consumerRunning = false;
+        this.emit('disconnect');
+      }
+      this.emit('error', error);
       throw new Error(`Failed to publish message to topic ${topic}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -112,23 +133,67 @@ export class KafkaBroker extends EventEmitter implements IBroker {
         throw new Error('Kafka broker is not connected. Call connect() first.');
       }
 
-      for (const topic of topics) {
+      // Store the message handler
+      this.messageHandler = handler;
+
+      // Subscribe to new topics
+      const newTopics = topics.filter(topic => !this.subscribedTopics.has(topic));
+      
+      for (const topic of newTopics) {
         await this.consumer.subscribe({ 
           topic, 
           fromBeginning: options?.fromBeginning ?? true 
         });
+        this.subscribedTopics.add(topic);
       }
 
-      await this.consumer.run({
-        eachMessage: async ({ topic, message }) => {
-          try {
-            await handler(topic, message.value!);
-          } catch (error) {
-            console.error(`Error handling message from topic ${topic}:`, error);
-          }
-        },
-      });
+      // Start the consumer if it's not already running
+      if (!this.consumerRunning) {
+        await this.consumer.run({
+          eachMessage: async ({ topic, message }) => {
+            try {
+              if (this.messageHandler) {
+                await this.messageHandler(topic, message.value!);
+              }
+            } catch (error) {
+              console.error(`Error handling message from topic ${topic}:`, error);
+              this.emit('error', error);
+            }
+          },
+          eachBatch: async ({ batch, resolveOffset, heartbeat, isRunning, isStale }) => {
+            try {
+              for (const message of batch.messages) {
+                if (!isRunning() || isStale()) break;
+                
+                if (this.messageHandler) {
+                  await this.messageHandler(batch.topic, message.value!);
+                }
+                resolveOffset(message.offset);
+              }
+              await heartbeat();
+            } catch (error) {
+              console.error(`Error handling batch from topic ${batch.topic}:`, error);
+              this.emit('error', error);
+            }
+          },
+        });
+        this.consumerRunning = true;
+      }
     } catch (error) {
+      // Check if it's a connection-related error
+      if (error instanceof Error && (
+        error.message.includes('ECONNRESET') ||
+        error.message.includes('ENOTFOUND') ||
+        error.message.includes('ETIMEDOUT') ||
+        error.message.includes('Connection closed')
+      )) {
+        this.connected = false;
+        this.producerConnected = false;
+        this.consumerConnected = false;
+        this.consumerRunning = false;
+        this.emit('disconnect');
+      }
+      this.emit('error', error);
       throw new Error(`Failed to subscribe to topics ${topics.join(', ')}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -141,6 +206,9 @@ export class KafkaBroker extends EventEmitter implements IBroker {
         this.connected = false;
         this.producerConnected = false;
         this.consumerConnected = false;
+        this.consumerRunning = false;
+        this.subscribedTopics.clear();
+        this.messageHandler = undefined;
         this.emit('disconnect');
       }
     } catch (error) {

@@ -1,5 +1,93 @@
 import { BrokerManager } from './src/index';
 
+async function testRobustReconnection() {
+  console.log('Testing Robust Reconnection with Network Disconnections...');
+  
+  const broker = new BrokerManager({
+    brokerType: 'MQTT',
+    mqtt: {
+      url: 'mqtt://broker.hivemq.com',
+      clientId: 'test-robust-client-' + Date.now(),
+    },
+  });
+
+  // Configure reconnection settings
+  broker.setReconnectionConfig({
+    enabled: true,
+    maxAttempts: 5,
+    initialDelay: 1000,
+    maxDelay: 10000,
+    backoffMultiplier: 2,
+  });
+
+  // Set up comprehensive event listeners
+  broker.on('connect', () => {
+    console.log('✅ Connected to broker');
+  });
+
+  broker.on('disconnect', () => {
+    console.log('❌ Disconnected from broker');
+  });
+
+  broker.on('error', (error) => {
+    console.log('⚠️ Broker error:', error?.message);
+  });
+
+  broker.on('connecting', () => {
+    console.log('🔄 Connecting to broker...');
+  });
+
+  broker.on('reconnect', () => {
+    console.log('🔄 Reconnected successfully');
+  });
+
+  broker.on('reconnect_failed', (error) => {
+    console.log('💥 Reconnection failed:', error?.message);
+  });
+
+  try {
+    // Connect initially
+    console.log('🔌 Initial connection...');
+    await broker.connect();
+    
+    console.log('📊 Connection state:', broker.getConnectionState());
+    console.log('🔗 Is connected:', broker.isConnected());
+
+    // Subscribe to topics
+    await broker.subscribe(['test/robust'], (topic, message) => {
+      console.log(`📨 Received on ${topic}: ${message.toString()}`);
+    });
+
+    // Publish a message
+    await broker.publish('test/robust', 'Hello from robust connection!');
+    console.log('✅ Message published successfully');
+
+    // Simulate network disconnection by publishing while connection might be unstable
+    console.log('🔄 Testing resilience with multiple operations...');
+    
+    for (let i = 0; i < 5; i++) {
+      try {
+        await broker.publish('test/robust', `Message ${i + 1} - testing resilience`);
+        console.log(`✅ Published message ${i + 1}`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.log(`⚠️ Operation ${i + 1} failed, but reconnection should handle it:`, error?.message);
+      }
+    }
+
+    console.log('📊 Final connection state:', broker.getConnectionState());
+    console.log('🔗 Final is connected:', broker.isConnected());
+    console.log('🔄 Reconnect attempts:', broker.getReconnectAttempts());
+
+    // Disconnect cleanly
+    await broker.disconnect();
+    console.log('✅ Disconnected successfully');
+
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+  }
+}
+
 async function testExplicitConnection() {
   console.log('Testing Explicit Connection Management...');
   
@@ -131,10 +219,10 @@ async function testReconnection() {
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-          mqtt: {
-        url: 'mqtt://broker.hivemq.com',
-        clientId: 'test-reconnect-client-' + Date.now(),
-      },
+    mqtt: {
+      url: 'mqtt://broker.hivemq.com',
+      clientId: 'test-reconnect-client-' + Date.now(),
+    },
   });
 
   // Set up event listeners
@@ -168,10 +256,10 @@ async function testMQTT() {
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-          mqtt: {
-        url: 'mqtt://broker.hivemq.com',
-        clientId: 'test-client-' + Date.now(),
-      },
+    mqtt: {
+      url: 'mqtt://broker.hivemq.com',
+      clientId: 'test-client-' + Date.now(),
+    },
   });
 
   // Set up event listeners
@@ -207,10 +295,10 @@ async function testWithOptions() {
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-          mqtt: {
-        url: 'mqtt://broker.hivemq.com',
-        clientId: 'test-options-client-' + Date.now(),
-      },
+    mqtt: {
+      url: 'mqtt://broker.hivemq.com',
+      clientId: 'test-options-client-' + Date.now(),
+    },
   });
 
   // Set up event listeners
@@ -250,10 +338,10 @@ async function testErrorHandling() {
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-          mqtt: {
-        url: 'mqtt://invalid-broker-url.com',
-        clientId: 'test-error-client-' + Date.now(),
-      },
+    mqtt: {
+      url: 'mqtt://invalid-broker-url.com',
+      clientId: 'test-error-client-' + Date.now(),
+    },
   });
 
   // Set up event listeners
@@ -283,7 +371,11 @@ async function testErrorHandling() {
 }
 
 async function main() {
-  console.log('Starting broker-lib tests with explicit connection management...\n');
+  console.log('Starting broker-lib tests with robust reconnection...\n');
+
+  // Test robust reconnection (this is the main new feature)
+  await testRobustReconnection();
+  console.log('');
 
   // Test explicit connection management
   await testExplicitConnection();
