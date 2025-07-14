@@ -1,0 +1,117 @@
+import mqtt, { MqttClient, IClientOptions } from 'mqtt';
+import { IBroker, MessageHandler, PublishOptions, SubscribeOptions } from '../types';
+import { MqttConfig } from '../config';
+
+export class MqttBroker implements IBroker {
+  private client: MqttClient;
+  private connected = false;
+
+  constructor(config: MqttConfig) {
+    
+    const options: IClientOptions = {
+      clean: config.clean ?? true,
+      reconnectPeriod: config.reconnectPeriod ?? 1000,
+      connectTimeout: config.connectTimeout ?? 30000,
+      rejectUnauthorized: config.rejectUnauthorized ?? true,
+    };
+
+    if (config.username) {
+      options.username = config.username;
+    }
+    if (config.password) {
+      options.password = config.password;
+    }
+    if (config.clientId) {
+      options.clientId = config.clientId;
+    }
+
+    this.client = mqtt.connect(config.url, options);
+
+    this.client.on('connect', () => {
+      this.connected = true;
+      console.log('MQTT connected');
+    });
+
+    this.client.on('error', (error) => {
+      console.error('MQTT error:', error);
+      this.connected = false;
+    });
+
+    this.client.on('close', () => {
+      this.connected = false;
+      console.log('MQTT disconnected');
+    });
+  }
+
+  async publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.connected) {
+        reject(new Error('MQTT client not connected'));
+        return;
+      }
+
+      const publishOptions = {
+        qos: (options?.qos ?? 0) as 0 | 1 | 2,
+        retain: options?.retain ?? false,
+      };
+
+      this.client.publish(topic, message, publishOptions, (error) => {
+        if (error) {
+          reject(new Error(`Failed to publish message to topic ${topic}: ${error.message}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  async subscribe(topics: string[], handler: MessageHandler, options?: SubscribeOptions): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.connected) {
+        reject(new Error('MQTT client not connected'));
+        return;
+      }
+
+      this.client.on('message', async (topic, message) => {
+        try {
+          await handler(topic, message);
+        } catch (error) {
+          console.error(`Error handling message from topic ${topic}:`, error);
+        }
+      });
+
+      const subscribeOptions = {
+        qos: (options?.qos ?? 0) as 0 | 1 | 2,
+      };
+
+      this.client.subscribe(topics, subscribeOptions, (error) => {
+        if (error) {
+          reject(new Error(`Failed to subscribe to topics ${topics.join(', ')}: ${error.message}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  async disconnect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.connected) {
+        this.client.end(true, {}, (error) => {
+          if (error) {
+            reject(new Error(`Failed to disconnect: ${error.message}`));
+          } else {
+            this.connected = false;
+            resolve();
+          }
+        });
+      } else {
+        resolve();
+      }
+    });
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+}

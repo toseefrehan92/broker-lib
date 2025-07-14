@@ -1,0 +1,46 @@
+{
+  "name": "broker-lib",
+  "version": "1.0.0",
+  "description": "Multi-Broker Message Bus with Multi-Topic Support",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "message-bus",
+    "broker",
+    "kafka",
+    "mqtt",
+    "pubsub",
+    "typescript",
+    "messaging"
+  ],
+  "author": "Tauseef Rehan",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/pubsub": "^5.1.0",
+    "kafkajs": "^2.2.4",
+    "mqtt": "^5.13.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/broker-lib.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/broker-lib/issues"
+  },
+  "homepage": "https://github.com/yourusername/broker-lib#readme"
+}
