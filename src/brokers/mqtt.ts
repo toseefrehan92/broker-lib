@@ -1,12 +1,14 @@
 import mqtt, { MqttClient, IClientOptions } from 'mqtt';
 import { IBroker, MessageHandler, PublishOptions, SubscribeOptions } from '../types';
 import { MqttConfig } from '../config';
+import { EventEmitter } from 'events';
 
-export class MqttBroker implements IBroker {
+export class MqttBroker extends EventEmitter implements IBroker {
   private client: MqttClient;
   private connected = false;
 
   constructor(config: MqttConfig) {
+    super();
     
     const options: IClientOptions = {
       clean: config.clean ?? true,
@@ -29,24 +31,51 @@ export class MqttBroker implements IBroker {
 
     this.client.on('connect', () => {
       this.connected = true;
-      console.log('MQTT connected');
+      this.emit('connect');
     });
 
     this.client.on('error', (error) => {
-      console.error('MQTT error:', error);
       this.connected = false;
+      this.emit('error', error);
     });
 
     this.client.on('close', () => {
       this.connected = false;
-      console.log('MQTT disconnected');
+      this.emit('disconnect');
+    });
+
+    this.client.on('reconnect', () => {
+      this.emit('reconnect');
+    });
+  }
+
+  async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.connected) {
+        resolve();
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        reject(new Error('MQTT connection timeout'));
+      }, 30000);
+
+      this.client.once('connect', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+
+      this.client.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(new Error(`MQTT connection failed: ${error.message}`));
+      });
     });
   }
 
   async publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.connected) {
-        reject(new Error('MQTT client not connected'));
+        reject(new Error('MQTT broker is not connected. Call connect() first.'));
         return;
       }
 
@@ -68,7 +97,7 @@ export class MqttBroker implements IBroker {
   async subscribe(topics: string[], handler: MessageHandler, options?: SubscribeOptions): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.connected) {
-        reject(new Error('MQTT client not connected'));
+        reject(new Error('MQTT broker is not connected. Call connect() first.'));
         return;
       }
 

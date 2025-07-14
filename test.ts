@@ -1,17 +1,188 @@
 import { BrokerManager } from './src/index';
 
-async function testMQTT() {
-  console.log('Testing MQTT...');
+async function testExplicitConnection() {
+  console.log('Testing Explicit Connection Management...');
+  
+  const broker = new BrokerManager({
+    brokerType: 'KAFKA',
+    kafka: {
+      clientId: 'test-explicit-client',
+      brokers: ['localhost:9092'],
+      groupId: 'test-explicit-group',
+    },
+  });
+
+  // Set up event listeners
+  broker.on('connect', () => {
+    console.log('✅ Broker Connected');
+  });
+
+  broker.on('disconnect', () => {
+    console.log('❌ Broker Disconnected');
+  });
+
+  broker.on('error', (error) => {
+    console.log('⚠️ Broker Error:', error?.message);
+  });
+
+  broker.on('connecting', () => {
+    console.log('🔄 Connecting to broker...');
+  });
+
+  try {
+    console.log('📊 Initial connection state:', broker.getConnectionState());
+    console.log('🔗 Is connected:', broker.isConnected());
+
+    // Explicitly connect
+    console.log('🔌 Connecting explicitly...');
+    await broker.connect();
+    
+    console.log('📊 Connection state after connect:', broker.getConnectionState());
+    console.log('🔗 Is connected:', broker.isConnected());
+
+    if (broker.isConnected()) {
+      console.log('✅ Connection successful!');
+      
+      // Test publish
+      await broker.publish('test-explicit-topic', 'Hello from explicit connection!');
+      console.log('✅ Message published successfully');
+      
+      // Test subscribe
+      await broker.subscribe(['test-explicit-topic'], (topic, message) => {
+        console.log(`📨 Received on ${topic}: ${message.toString()}`);
+      });
+      console.log('✅ Subscribed successfully');
+      
+      // Wait a bit
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Disconnect
+      await broker.disconnect();
+      console.log('✅ Disconnected successfully');
+    } else {
+      console.log('❌ Connection failed');
+    }
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+  }
+}
+
+async function testConnectionLifecycle() {
+  console.log('Testing Connection Lifecycle...');
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
     mqtt: {
       url: 'mqtt://broker.hivemq.com',
-      clientId: 'test-client-' + Date.now(),
+      clientId: 'test-lifecycle-client-' + Date.now(),
     },
   });
 
+  // Set up event listeners
+  broker.on('connect', () => {
+    console.log('✅ Connected to broker');
+  });
+
+  broker.on('disconnect', () => {
+    console.log('❌ Disconnected from broker');
+  });
+
+  broker.on('error', (error) => {
+    console.log('⚠️ Connection error:', error?.message);
+  });
+
+  broker.on('connecting', () => {
+    console.log('🔄 Connecting...');
+  });
+
   try {
+    // Connect explicitly
+    console.log('🔌 Connecting...');
+    await broker.connect();
+    
+    console.log('📊 Connection state:', broker.getConnectionState());
+    console.log('🔗 Is connected:', broker.isConnected());
+
+    // Subscribe to topics
+    await broker.subscribe(['test/lifecycle'], (topic, message) => {
+      console.log(`📨 Received on ${topic}: ${message.toString()}`);
+    });
+
+    // Publish messages
+    await broker.publish('test/lifecycle', 'Hello Connection Lifecycle!');
+
+    // Wait a bit for messages to be processed
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // Disconnect
+    console.log('🔌 Disconnecting...');
+    await broker.disconnect();
+    
+    console.log('📊 Final connection state:', broker.getConnectionState());
+    console.log('🔗 Final is connected:', broker.isConnected());
+
+  } catch (error) {
+    console.error('❌ Test failed:', error);
+  }
+}
+
+async function testReconnection() {
+  console.log('Testing reconnection...');
+  
+  const broker = new BrokerManager({
+    brokerType: 'MQTT',
+          mqtt: {
+        url: 'mqtt://broker.hivemq.com',
+        clientId: 'test-reconnect-client-' + Date.now(),
+      },
+  });
+
+  // Set up event listeners
+  broker.on('connect', () => console.log('🟢 Connected'));
+  broker.on('disconnect', () => console.log('🔴 Disconnected'));
+  broker.on('error', (error) => console.log('⚠️ Error:', error?.message));
+  broker.on('reconnect', () => console.log('🔄 Reconnected'));
+  broker.on('reconnect_failed', (error) => console.log('💥 Reconnect failed:', error?.message));
+
+  try {
+    await broker.connect();
+    console.log('Initial connection successful');
+    
+    // Simulate some work
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Test manual reconnect
+    console.log('Testing manual reconnect...');
+    await broker.reconnect();
+    
+    console.log('Reconnection test completed');
+  } catch (error) {
+    console.error('Reconnection test failed:', error);
+  } finally {
+    await broker.disconnect();
+  }
+}
+
+async function testMQTT() {
+  console.log('Testing MQTT...');
+  
+  const broker = new BrokerManager({
+    brokerType: 'MQTT',
+          mqtt: {
+        url: 'mqtt://broker.hivemq.com',
+        clientId: 'test-client-' + Date.now(),
+      },
+  });
+
+  // Set up event listeners
+  broker.on('connect', () => console.log('MQTT Connected'));
+  broker.on('disconnect', () => console.log('MQTT Disconnected'));
+  broker.on('error', (error) => console.log('MQTT Error:', error?.message));
+
+  try {
+    // Connect first
+    await broker.connect();
+    
     // Subscribe to topics
     await broker.subscribe(['test/topic1', 'test/topic2'], (topic, message) => {
       console.log(`MQTT Received on ${topic}: ${message.toString()}`);
@@ -31,81 +202,25 @@ async function testMQTT() {
   }
 }
 
-async function testKafka() {
-  console.log('Testing Kafka...');
-  
-  const broker = new BrokerManager({
-    brokerType: 'KAFKA',
-    kafka: {
-      clientId: 'test-client',
-      brokers: ['localhost:9092'],
-      groupId: 'test-group',
-    },
-  });
-
-  try {
-    // Subscribe to topics
-    await broker.subscribe(['test-topic'], (topic, message) => {
-      console.log(`Kafka Received on ${topic}: ${message.toString()}`);
-    });
-
-    // Publish messages
-    await broker.publish('test-topic', 'Hello Kafka!');
-    await broker.publish('test-topic', 'Hello from broker-lib!');
-
-    // Wait a bit for messages to be processed
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    await broker.disconnect();
-    console.log('Kafka test completed');
-  } catch (error) {
-    console.error('Kafka test failed:', error);
-  }
-}
-
-async function testGCPPubSub() {
-  console.log('Testing GCP PubSub...');
-  
-  const broker = new BrokerManager({
-    brokerType: 'GCP_PUBSUB',
-    gcp: {
-      projectId: 'your-project-id',
-      keyFilename: '/path/to/service-account-key.json',
-    },
-  });
-
-  try {
-    // Subscribe to topics
-    await broker.subscribe(['test-topic'], (topic, message) => {
-      console.log(`PubSub Received on ${topic}: ${message.toString()}`);
-    });
-
-    // Publish messages
-    await broker.publish('test-topic', 'Hello PubSub!');
-    await broker.publish('test-topic', 'Hello from broker-lib!');
-
-    // Wait a bit for messages to be processed
-    await new Promise(resolve => setTimeout(resolve, 2000));
-
-    await broker.disconnect();
-    console.log('GCP PubSub test completed');
-  } catch (error) {
-    console.error('GCP PubSub test failed:', error);
-  }
-}
-
 async function testWithOptions() {
   console.log('Testing with message options...');
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-    mqtt: {
-      url: 'mqtt://broker.hivemq.com',
-      clientId: 'test-options-client-' + Date.now(),
-    },
+          mqtt: {
+        url: 'mqtt://broker.hivemq.com',
+        clientId: 'test-options-client-' + Date.now(),
+      },
   });
 
+  // Set up event listeners
+  broker.on('connect', () => console.log('Options test connected'));
+  broker.on('disconnect', () => console.log('Options test disconnected'));
+
   try {
+    // Connect first
+    await broker.connect();
+    
     // Subscribe with options
     await broker.subscribe(['test/options'], (topic, message) => {
       console.log(`Received with options on ${topic}: ${message.toString()}`);
@@ -135,29 +250,52 @@ async function testErrorHandling() {
   
   const broker = new BrokerManager({
     brokerType: 'MQTT',
-    mqtt: {
-      url: 'mqtt://invalid-broker-url.com',
-      clientId: 'test-error-client-' + Date.now(),
-    },
+          mqtt: {
+        url: 'mqtt://invalid-broker-url.com',
+        clientId: 'test-error-client-' + Date.now(),
+      },
   });
+
+  // Set up event listeners
+  broker.on('connect', () => console.log('Error test connected'));
+  broker.on('disconnect', () => console.log('Error test disconnected'));
+  broker.on('error', (error) => console.log('Error test error:', error?.message));
+
+  try {
+    await broker.connect();
+  } catch (error) {
+    console.log('Expected connection error caught:', error);
+  }
 
   try {
     await broker.publish('test/topic', 'This should fail');
   } catch (error) {
-    console.log('Expected error caught:', error.message);
+    console.log('Expected publish error caught:', error);
   }
 
   try {
-    await broker.subscribe(['test/topic'], (topic, message) => {
+    await broker.subscribe(['test/topic'], (_topic, _message) => {
       console.log('This should not be called');
     });
   } catch (error) {
-    console.log('Expected subscription error caught:', error.message);
+    console.log('Expected subscription error caught:', error);
   }
 }
 
 async function main() {
-  console.log('Starting broker-lib tests...\n');
+  console.log('Starting broker-lib tests with explicit connection management...\n');
+
+  // Test explicit connection management
+  await testExplicitConnection();
+  console.log('');
+
+  // Test connection lifecycle
+  await testConnectionLifecycle();
+  console.log('');
+
+  // Test reconnection
+  await testReconnection();
+  console.log('');
 
   // Test MQTT (this should work with public broker)
   await testMQTT();
@@ -170,10 +308,6 @@ async function main() {
   // Test error handling
   await testErrorHandling();
   console.log('');
-
-  // Uncomment these to test other brokers (requires local setup)
-  // await testKafka();
-  // await testGCPPubSub();
 
   console.log('All tests completed!');
 }

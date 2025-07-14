@@ -2,13 +2,18 @@ import { Kafka, Consumer, Producer, KafkaConfig as KafkaJSConfig } from 'kafkajs
 import { IBroker, MessageHandler, PublishOptions, SubscribeOptions } from '../types';
 import { KafkaConfig } from '../config';
 
-export class KafkaBroker implements IBroker {
+import { EventEmitter } from 'events';
+
+export class KafkaBroker extends EventEmitter implements IBroker {
   private kafka: Kafka;
   private producer: Producer;
   private consumer: Consumer;
   private connected = false;
+  private producerConnected = false;
+  private consumerConnected = false;
 
   constructor(config: KafkaConfig) {
+    super();
     
     const kafkaConfig: KafkaJSConfig = {
       clientId: config.clientId,
@@ -46,11 +51,33 @@ export class KafkaBroker implements IBroker {
     this.consumer = this.kafka.consumer({ groupId: config.groupId });
   }
 
+  async connect(): Promise<void> {
+    try {
+      // Connect producer
+      if (!this.producerConnected) {
+        await this.producer.connect();
+        this.producerConnected = true;
+      }
+
+      // Connect consumer
+      if (!this.consumerConnected) {
+        await this.consumer.connect();
+        this.consumerConnected = true;
+      }
+
+      this.connected = true;
+      this.emit('connect');
+    } catch (error) {
+      this.connected = false;
+      this.emit('error', error);
+      throw new Error(`Failed to connect to Kafka: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void> {
     try {
       if (!this.connected) {
-        await this.producer.connect();
-        this.connected = true;
+        throw new Error('Kafka broker is not connected. Call connect() first.');
       }
 
       const messageObj: any = {
@@ -82,8 +109,7 @@ export class KafkaBroker implements IBroker {
   async subscribe(topics: string[], handler: MessageHandler, options?: SubscribeOptions): Promise<void> {
     try {
       if (!this.connected) {
-        await this.consumer.connect();
-        this.connected = true;
+        throw new Error('Kafka broker is not connected. Call connect() first.');
       }
 
       for (const topic of topics) {
@@ -113,8 +139,12 @@ export class KafkaBroker implements IBroker {
         await this.consumer.disconnect();
         await this.producer.disconnect();
         this.connected = false;
+        this.producerConnected = false;
+        this.consumerConnected = false;
+        this.emit('disconnect');
       }
     } catch (error) {
+      this.emit('error', error);
       throw new Error(`Failed to disconnect: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

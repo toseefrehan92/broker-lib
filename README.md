@@ -261,9 +261,11 @@ const broker = new BrokerManager({
 });
 ```
 
-## Complete Usage Examples
+## Connection Management
 
-### Kafka Example
+The `BrokerManager` now supports explicit connection management with event-driven state tracking.
+
+### Explicit Connection Management
 
 ```typescript
 import { BrokerManager } from 'broker-lib';
@@ -277,11 +279,103 @@ const broker = new BrokerManager({
   },
 });
 
+// Set up event listeners for connection state
+broker.on('connect', () => {
+  console.log('✅ Connected to broker');
+});
+
+broker.on('disconnect', () => {
+  console.log('❌ Disconnected from broker');
+});
+
+broker.on('error', (error) => {
+  console.log('⚠️ Broker error:', error?.message);
+});
+
+broker.on('connecting', () => {
+  console.log('🔄 Connecting to broker...');
+});
+
+// Connect explicitly
+await broker.connect();
+
+// Check connection state
+console.log('Connection state:', broker.getConnectionState()); // 'connected'
+console.log('Is connected:', broker.isConnected()); // true
+
+// Publish and subscribe (connection is guaranteed)
+await broker.publish('my-topic', 'Hello World!');
+await broker.subscribe(['my-topic'], (topic, message) => {
+  console.log(`Received: ${message.toString()}`);
+});
+
+// Disconnect when done
+await broker.disconnect();
+```
+
+### Connection States
+
+The broker manager tracks connection states:
+- `'disconnected'` - Not connected
+- `'connecting'` - Attempting to connect
+- `'connected'` - Successfully connected
+- `'error'` - Connection error occurred
+
+### Automatic Connection
+
+If you don't call `connect()` explicitly, the broker will automatically connect when you call `publish()` or `subscribe()`:
+
+```typescript
+const broker = new BrokerManager({
+  brokerType: 'MQTT',
+  mqtt: {
+    url: 'mqtt://broker.hivemq.com',
+  },
+});
+
+// Connection happens automatically
+await broker.publish('my-topic', 'Hello!');
+await broker.subscribe(['my-topic'], (topic, message) => {
+  console.log(`Received: ${message.toString()}`);
+});
+```
+
+### Reconnection
+
+You can manually reconnect if needed:
+
+```typescript
+// Disconnect and reconnect
+await broker.reconnect();
+```
+
+## Complete Usage Examples
+
+### Kafka Example with Connection Management
+
+```typescript
+import { BrokerManager } from 'broker-lib';
+
+const broker = new BrokerManager({
+  brokerType: 'KAFKA',
+  kafka: {
+    clientId: 'my-app',
+    brokers: ['localhost:9092'],
+    groupId: 'my-group',
+  },
+});
+
+// Connect explicitly
+await broker.connect();
+
 await broker.subscribe(['my-topic'], (topic, message) => {
   console.log(`Kafka message: ${message.toString()}`);
 });
 
 await broker.publish('my-topic', 'Hello Kafka!');
+
+// Disconnect when done
+await broker.disconnect();
 ```
 
 ### MQTT Example
@@ -348,12 +442,26 @@ interface BrokerConfig {
 
 #### Methods
 
+- `connect(): Promise<void>` - Explicitly connect to the broker
 - `publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void>`
 - `subscribe(topics: string[], handler?: MessageHandler, options?: SubscribeOptions): Promise<void>`
 - `disconnect(): Promise<void>`
-- `isConnected(): boolean`
+- `reconnect(): Promise<void>` - Disconnect and reconnect to the broker
+- `isConnected(): boolean` - Check if currently connected
+- `getConnectionState(): 'disconnected' | 'connecting' | 'connected' | 'error'` - Get current connection state
 - `getBrokerType(): BrokerType`
 - `setMessageHandler(handler: MessageHandler): void`
+
+#### Events
+
+The `BrokerManager` extends `EventEmitter` and emits the following events:
+
+- `'connect'` - Emitted when successfully connected
+- `'disconnect'` - Emitted when disconnected
+- `'error'` - Emitted when a connection error occurs
+- `'connecting'` - Emitted when attempting to connect
+- `'reconnect'` - Emitted when reconnected (MQTT only)
+- `'reconnect_failed'` - Emitted when reconnection fails (MQTT only)
 
 ### Configuration Interfaces
 

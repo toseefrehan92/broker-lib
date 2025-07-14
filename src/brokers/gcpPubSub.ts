@@ -1,13 +1,15 @@
 import { PubSub, Subscription } from '@google-cloud/pubsub';
 import { IBroker, MessageHandler, PublishOptions, SubscribeOptions } from '../types';
 import { GCPPubSubConfig } from '../config';
+import { EventEmitter } from 'events';
 
-export class GCPPubSubBroker implements IBroker {
+export class GCPPubSubBroker extends EventEmitter implements IBroker {
   private pubsub: PubSub;
   private subscriptions: Map<string, Subscription> = new Map();
   private connected = false;
 
   constructor(config: GCPPubSubConfig) {
+    super();
     
     const pubsubConfig: any = {
       projectId: config.projectId,
@@ -27,6 +29,20 @@ export class GCPPubSubBroker implements IBroker {
 
     this.pubsub = new PubSub(pubsubConfig);
     this.connected = true;
+    this.emit('connect');
+  }
+
+  async connect(): Promise<void> {
+    try {
+      // GCP PubSub doesn't require explicit connection
+      // The client is ready to use after instantiation
+      this.connected = true;
+      this.emit('connect');
+    } catch (error) {
+      this.connected = false;
+      this.emit('error', error);
+      throw new Error(`Failed to connect to GCP PubSub: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void> {
@@ -115,7 +131,9 @@ export class GCPPubSubBroker implements IBroker {
       }
       this.subscriptions.clear();
       this.connected = false;
+      this.emit('disconnect');
     } catch (error) {
+      this.emit('error', error);
       throw new Error(`Failed to disconnect: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

@@ -1,4 +1,5 @@
 export interface IBroker {
+  connect(): Promise<void>;
   publish(topic: string, message: string | Buffer, options?: PublishOptions): Promise<void>;
   subscribe(topics: string[], handler: MessageHandler, options?: SubscribeOptions): Promise<void>;
   disconnect(): Promise<void>;
