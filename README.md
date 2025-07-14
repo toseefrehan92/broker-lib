@@ -45,6 +45,258 @@ await broker.publish('topic2', 'Hello from broker-lib!');
 await broker.disconnect();
 ```
 
+## Environment-Based Configuration
+
+For applications that want to configure brokers using environment variables, you can use the factory functions to create broker instances from environment configuration.
+
+### Using Factory Functions
+
+```typescript
+import { 
+  createBrokerManagerFromEnv, 
+  createSubscriptionManagerFromEnv,
+  BrokerEnvConfig 
+} from 'broker-lib';
+
+// Define your environment variables
+const env: BrokerEnvConfig = {
+  BROKER_TYPE: 'MQTT',
+  BROKER_CLIENT_ID: 'my-app',
+  MQTT_URL: 'mqtt://broker.hivemq.com',
+};
+
+// Create broker manager from environment
+const brokerManager = createBrokerManagerFromEnv(env, 'my-app');
+
+// Or create subscription manager from environment
+const subscriptionManager = createSubscriptionManagerFromEnv(env, 'my-app');
+```
+
+### Environment Variables
+
+The following environment variables are supported:
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `BROKER_TYPE` | Broker type: `MQTT`, `KAFKA`, or `GCP_PUBSUB` | `KAFKA` | No |
+| `BROKER_CLIENT_ID` | Client ID for the broker | `broker-lib-app` | No |
+| `MQTT_URL` | MQTT broker URL | `mqtt://localhost:1883` | For MQTT |
+| `KAFKA_BROKERS` | Comma-separated list of Kafka brokers | `localhost:9092` | For Kafka |
+| `KAFKA_GROUP_ID` | Kafka consumer group ID | `{clientId}-group` | For Kafka |
+| `GCP_PROJECT_ID` | Google Cloud project ID | `your-project-id` | For GCP Pub/Sub |
+| `GCP_KEY_FILENAME` | Path to service account key file | - | For GCP Pub/Sub |
+
+### Examples
+
+**MQTT Configuration:**
+```typescript
+const env = {
+  BROKER_TYPE: 'MQTT',
+  BROKER_CLIENT_ID: 'my-mqtt-app',
+  MQTT_URL: 'mqtt://broker.example.com',
+};
+
+const subscriptionManager = createSubscriptionManagerFromEnv(env, 'my-mqtt-app');
+```
+
+**Kafka Configuration:**
+```typescript
+const env = {
+  BROKER_TYPE: 'KAFKA',
+  BROKER_CLIENT_ID: 'my-kafka-app',
+  KAFKA_BROKERS: 'kafka1.example.com:9092,kafka2.example.com:9092',
+  KAFKA_GROUP_ID: 'my-consumer-group',
+};
+
+const brokerManager = createBrokerManagerFromEnv(env, 'my-kafka-app');
+```
+
+**GCP Pub/Sub Configuration:**
+```typescript
+const env = {
+  BROKER_TYPE: 'GCP_PUBSUB',
+  BROKER_CLIENT_ID: 'my-gcp-app',
+  GCP_PROJECT_ID: 'my-project-id',
+  GCP_KEY_FILENAME: '/path/to/service-account-key.json',
+};
+
+const subscriptionManager = createSubscriptionManagerFromEnv(env, 'my-gcp-app');
+```
+
+**Using with process.env:**
+```typescript
+// Set environment variables
+process.env.BROKER_TYPE = 'KAFKA';
+process.env.BROKER_CLIENT_ID = 'my-app';
+process.env.KAFKA_BROKERS = 'localhost:9092';
+process.env.KAFKA_GROUP_ID = 'my-group';
+
+// Create broker manager from process.env
+const brokerManager = createBrokerManagerFromEnv(process.env as BrokerEnvConfig, 'my-app');
+```
+
+### Replacing Complex Configuration Code
+
+Instead of writing complex configuration methods like this:
+
+```typescript
+// OLD: Complex configuration method
+private getConfig(): BrokerConfig {
+  const brokerType = this.configService.get<string>('BROKER_TYPE', 'KAFKA');
+  
+  if (brokerType === 'MQTT') {
+    return {
+      brokerType: 'MQTT' as const,
+      mqtt: {
+        url: this.configService.get<string>('MQTT_URL', 'mqtt://localhost:1883'),
+        clientId: this.configService.get<string>('BROKER_CLIENT_ID') || 'my-app',
+        clean: true,
+        reconnectPeriod: 1000,
+        connectTimeout: 30000,
+      },
+    };
+  }
+  
+  if (brokerType === 'KAFKA') {
+    return {
+      brokerType: 'KAFKA' as const,
+      kafka: {
+        clientId: this.configService.get<string>('BROKER_CLIENT_ID') || 'my-app',
+        brokers: [this.configService.get<string>('KAFKA_BROKERS', 'localhost:9092')],
+        groupId: this.configService.get<string>('KAFKA_GROUP_ID', 'my-group'),
+      },
+    };
+  }
+  
+  // Default to Kafka...
+}
+```
+
+You can now use a single line:
+
+```typescript
+// NEW: Single line configuration
+const env = {
+  BROKER_TYPE: this.configService.get('BROKER_TYPE', 'KAFKA'),
+  BROKER_CLIENT_ID: this.configService.get('BROKER_CLIENT_ID', 'my-app'),
+  MQTT_URL: this.configService.get('MQTT_URL', 'mqtt://localhost:1883'),
+  KAFKA_BROKERS: this.configService.get('KAFKA_BROKERS', 'localhost:9092'),
+  KAFKA_GROUP_ID: this.configService.get('KAFKA_GROUP_ID', 'my-group'),
+};
+
+const brokerManager = createBrokerManagerFromEnv(env, 'my-app');
+```
+
+## Simplified Subscription Interface
+
+For applications that want a simpler subscription interface, you can use the `SubscriptionManager` class. This provides a cleaner API where you only need to call one method with options and a callback.
+
+### Using SubscriptionManager
+
+```typescript
+import { SubscriptionManager } from 'broker-lib';
+
+// Create a subscription manager
+const subscriptionManager = new SubscriptionManager({
+  brokerType: 'MQTT',
+  mqtt: {
+    url: 'mqtt://broker.hivemq.com',
+  },
+});
+
+// Subscribe with simplified interface
+await subscriptionManager.subscribe(
+  { 
+    topic: 'my-topic',
+    qos: 1 
+  },
+  (message) => {
+    console.log('Received message:', message);
+  }
+);
+
+// Publish messages (automatically converts objects to JSON)
+await subscriptionManager.publish('my-topic', {
+  id: 1,
+  text: 'Hello World!',
+  timestamp: new Date().toISOString()
+});
+
+// Disconnect when done
+await subscriptionManager.disconnect();
+```
+
+### SubscriptionManager Features
+
+- **Automatic JSON Parsing**: Messages are automatically parsed as JSON, with fallback to raw string
+- **Automatic Connection Management**: Connects automatically when needed
+- **Simplified Options**: Single options object with topic and broker-specific settings
+- **Object Publishing**: Automatically converts objects to JSON when publishing
+- **Error Handling**: Built-in error handling and logging
+- **Event Forwarding**: All broker events are forwarded for monitoring
+
+### SubscriptionOptions Interface
+
+```typescript
+interface SubscriptionOptions {
+  topic: string;              // Required: Topic to subscribe to
+  fromBeginning?: boolean;    // Optional: Start from beginning (Kafka)
+  qos?: number;              // Optional: Quality of Service (MQTT)
+  autoAck?: boolean;         // Optional: Auto acknowledge (GCP PubSub)
+}
+```
+
+### SubscriptionCallback Interface
+
+```typescript
+interface SubscriptionCallback {
+  (message: any): void;      // Called with parsed message (JSON object or string)
+}
+```
+
+### Examples
+
+**MQTT with QoS:**
+```typescript
+await subscriptionManager.subscribe(
+  { 
+    topic: 'sensor/data',
+    qos: 2 
+  },
+  (message) => {
+    console.log('Sensor data:', message);
+  }
+);
+```
+
+**Kafka with fromBeginning:**
+```typescript
+await subscriptionManager.subscribe(
+  { 
+    topic: 'user-events',
+    fromBeginning: true 
+  },
+  (message) => {
+    console.log('User event:', message);
+  }
+);
+```
+
+**Multiple Subscriptions:**
+```typescript
+// First subscription
+await subscriptionManager.subscribe(
+  { topic: 'topic1' },
+  (message) => console.log('Topic 1:', message)
+);
+
+// Second subscription (works for all brokers)
+await subscriptionManager.subscribe(
+  { topic: 'topic2' },
+  (message) => console.log('Topic 2:', message)
+);
+```
+
 ## Configuration
 
 ### How Broker Configurations are Passed

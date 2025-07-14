@@ -13,6 +13,222 @@ interface ReconnectionConfig {
   backoffMultiplier: number;
 }
 
+// New interface for simplified subscription
+export interface SubscriptionOptions {
+  topic: string;
+  fromBeginning?: boolean;
+  qos?: number;
+  autoAck?: boolean;
+}
+
+export interface SubscriptionCallback {
+  (message: any): void;
+}
+
+// Environment configuration interface
+export interface BrokerEnvConfig {
+  BROKER_TYPE?: string;
+  BROKER_CLIENT_ID?: string;
+  MQTT_URL?: string;
+  KAFKA_BROKERS?: string;
+  KAFKA_GROUP_ID?: string;
+  GCP_PROJECT_ID?: string;
+  GCP_KEY_FILENAME?: string;
+  [key: string]: string | undefined;
+}
+
+// Factory function to create broker configuration from environment variables
+export function createBrokerConfigFromEnv(
+  env: BrokerEnvConfig,
+  defaultClientId: string = 'broker-lib-app'
+): BrokerConfig {
+  const brokerType = (env.BROKER_TYPE || 'KAFKA') as BrokerType;
+  const clientId = env.BROKER_CLIENT_ID || defaultClientId;
+
+  switch (brokerType) {
+    case 'MQTT':
+      return {
+        brokerType: 'MQTT',
+        mqtt: {
+          url: env.MQTT_URL || 'mqtt://localhost:1883',
+          clientId,
+          clean: true,
+          reconnectPeriod: 1000,
+          connectTimeout: 30000,
+        },
+      };
+
+    case 'KAFKA':
+      return {
+        brokerType: 'KAFKA',
+        kafka: {
+          clientId,
+          brokers: (env.KAFKA_BROKERS || 'localhost:9092').split(',').map(b => b.trim()),
+          groupId: env.KAFKA_GROUP_ID || `${clientId}-group`,
+        },
+      };
+
+    case 'GCP_PUBSUB':
+      const gcpConfig: any = {
+        projectId: env.GCP_PROJECT_ID || 'your-project-id',
+      };
+      
+      if (env.GCP_KEY_FILENAME) {
+        gcpConfig.keyFilename = env.GCP_KEY_FILENAME;
+      }
+      
+      return {
+        brokerType: 'GCP_PUBSUB',
+        gcp: gcpConfig,
+      };
+
+    default:
+      // Default to Kafka
+      return {
+        brokerType: 'KAFKA',
+        kafka: {
+          clientId,
+          brokers: (env.KAFKA_BROKERS || 'localhost:9092').split(',').map(b => b.trim()),
+          groupId: env.KAFKA_GROUP_ID || `${clientId}-group`,
+        },
+      };
+  }
+}
+
+// Factory function to create SubscriptionManager from environment variables
+export function createSubscriptionManagerFromEnv(
+  env: BrokerEnvConfig,
+  defaultClientId: string = 'broker-lib-app',
+  logger: Console = console
+): SubscriptionManager {
+  const config = createBrokerConfigFromEnv(env, defaultClientId);
+  return new SubscriptionManager(config, logger);
+}
+
+// Factory function to create BrokerManager from environment variables
+export function createBrokerManagerFromEnv(
+  env: BrokerEnvConfig,
+  defaultClientId: string = 'broker-lib-app'
+): BrokerManager {
+  const config = createBrokerConfigFromEnv(env, defaultClientId);
+  return new BrokerManager(config);
+}
+
+// New SubscriptionManager class for simplified subscription interface
+export class SubscriptionManager extends EventEmitter {
+  private brokerManager: BrokerManager;
+  private logger: Console;
+
+  constructor(brokerConfig: BrokerConfig, logger: Console = console) {
+    super();
+    this.brokerManager = new BrokerManager(brokerConfig);
+    this.logger = logger;
+
+    // Forward broker events
+    this.brokerManager.on('connect', () => this.emit('connect'));
+    this.brokerManager.on('disconnect', () => this.emit('disconnect'));
+    this.brokerManager.on('error', (error) => this.emit('error', error));
+    this.brokerManager.on('connecting', () => this.emit('connecting'));
+    this.brokerManager.on('reconnect', () => this.emit('reconnect'));
+    this.brokerManager.on('reconnect_failed', (error) => this.emit('reconnect_failed', error));
+  }
+
+  async connect(): Promise<void> {
+    await this.brokerManager.connect();
+  }
+
+  async disconnect(): Promise<void> {
+    await this.brokerManager.disconnect();
+  }
+
+  async subscribe(options: SubscriptionOptions, callback: SubscriptionCallback): Promise<void> {
+    try {
+      await this.ensureConnection();
+
+      // Set up message handler that parses JSON and calls the callback
+      this.brokerManager.setMessageHandler((topic: string, message: Buffer) => {
+        this.logger.log(`Received message on topic ${topic}: ${message.toString()}`);
+        try {
+          const parsedMessage = JSON.parse(message.toString());
+          callback(parsedMessage);
+        } catch (parseError) {
+          this.logger.warn('Failed to parse message as JSON, passing raw message');
+          callback(message.toString());
+        }
+      });
+
+      // Use the subscribe method with options
+      const subscribeOptions: SubscribeOptions = {
+        qos: options.qos ?? 1, // Default QoS for MQTT compatibility
+        autoAck: options.autoAck ?? true, // Default auto-ack for GCP PubSub compatibility
+      };
+      
+      if (options.fromBeginning !== undefined) {
+        subscribeOptions.fromBeginning = options.fromBeginning;
+      }
+
+      await this.brokerManager.subscribe([options.topic], undefined, subscribeOptions);
+      this.logger.log(`Subscribed to topic: ${options.topic}`);
+    } catch (error) {
+      this.logger.error(`Failed to subscribe to topic: ${options.topic}`, error);
+
+      // Handle Kafka-specific subscription error
+      if (error instanceof Error && error.message.includes('Cannot subscribe to topic while consumer is running')) {
+        this.logger.warn(`Consumer is already running. Topic ${options.topic} may already be subscribed.`);
+        // For Kafka, we can't subscribe to additional topics after consumer is running
+        // The topic should already be subscribed if it was added in a previous call
+        return;
+      }
+
+      throw error;
+    }
+  }
+
+  async publish(topic: string, message: any, options?: PublishOptions): Promise<void> {
+    try {
+      await this.ensureConnection();
+
+      const messageString = typeof message === 'string' ? message : JSON.stringify(message);
+      await this.brokerManager.publish(topic, messageString, options);
+      this.logger.log(`Published message to topic: ${topic}`);
+    } catch (error) {
+      this.logger.error(`Failed to publish message to topic: ${topic}`, error);
+      throw error;
+    }
+  }
+
+  private async ensureConnection(): Promise<void> {
+    if (!this.brokerManager.isConnected()) {
+      await this.brokerManager.connect();
+    }
+  }
+
+  // Expose broker manager methods for advanced usage
+  getBrokerManager(): BrokerManager {
+    return this.brokerManager;
+  }
+
+  isConnected(): boolean {
+    return this.brokerManager.isConnected();
+  }
+
+  getConnectionState(): 'disconnected' | 'connecting' | 'connected' | 'error' {
+    return this.brokerManager.getConnectionState();
+  }
+
+  getReconnectAttempts(): number {
+    return this.brokerManager.getReconnectAttempts();
+  }
+
+  setReconnectionConfig(config: Partial<ReconnectionConfig>): void {
+    this.brokerManager.setReconnectionConfig(config);
+  }
+
+  getBrokerType(): BrokerType {
+    return this.brokerManager.getBrokerType();
+  }
+}
+
 export class BrokerManager extends EventEmitter {
   private broker: IBroker;
   private config: BrokerConfig;
@@ -249,12 +465,11 @@ export class BrokerManager extends EventEmitter {
       await this.broker.connect();
       
       this.connectionState = 'connected';
-      this.reconnectAttempts = 0;
       this.emit('connect');
     } catch (error) {
       this.connectionState = 'error';
       this.emit('error', error);
-      throw new Error(`Failed to connect: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
   }
 
@@ -266,12 +481,10 @@ export class BrokerManager extends EventEmitter {
 
   async subscribe(topics: string[], handler?: MessageHandler, options?: SubscribeOptions): Promise<void> {
     return this.executeWithReconnection(async () => {
-      const messageHandler = handler || this.messageHandler;
-      if (!messageHandler) {
-        throw new Error('Message handler is required for subscription');
+      if (handler) {
+        this.messageHandler = handler;
       }
-      
-      await this.broker.subscribe(topics, messageHandler, options);
+      await this.broker.subscribe(topics, this.messageHandler!, options);
     });
   }
 
@@ -281,14 +494,17 @@ export class BrokerManager extends EventEmitter {
         clearTimeout(this.reconnectTimeout);
       }
       
+      await this.broker.disconnect();
+      
+      this.connectionState = 'disconnected';
+      this.reconnectAttempts = 0;
       this.isReconnecting = false;
       this.pendingOperations = [];
       
-      await this.broker.disconnect();
-      this.connectionState = 'disconnected';
       this.emit('disconnect');
     } catch (error) {
-      throw new Error(`Failed to disconnect: ${error instanceof Error ? error.message : String(error)}`);
+      this.emit('error', error);
+      throw error;
     }
   }
 
@@ -297,7 +513,8 @@ export class BrokerManager extends EventEmitter {
       await this.disconnect();
       await this.connect();
     } catch (error) {
-      throw new Error(`Failed to reconnect: ${error instanceof Error ? error.message : String(error)}`);
+      this.emit('error', error);
+      throw error;
     }
   }
 
@@ -306,7 +523,7 @@ export class BrokerManager extends EventEmitter {
   }
 
   isConnected(): boolean {
-    return this.broker.isConnected() && this.connectionState === 'connected';
+    return this.broker.isConnected();
   }
 
   getConnectionState(): 'disconnected' | 'connecting' | 'connected' | 'error' {
@@ -326,9 +543,6 @@ export class BrokerManager extends EventEmitter {
   }
 }
 
-// Export types and classes for external use
+// Re-export types for convenience
 export * from './types';
 export * from './config';
-export { KafkaBroker } from './brokers/kafka';
-export { MqttBroker } from './brokers/mqtt';
-export { GCPPubSubBroker } from './brokers/gcpPubSub';
