@@ -1,6 +1,6 @@
 {
   "name": "broker-lib",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "description": "Multi-Broker Message Bus with Multi-Topic Support",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

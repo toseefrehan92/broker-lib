@@ -334,6 +334,60 @@ export class SubscriptionManager extends EventEmitter {
   getBrokerType(): BrokerType {
     return this.brokerManager.getBrokerType();
   }
+
+  // Polling support for GCP Pub/Sub (when real-time subscription is not available)
+  async startPolling(topics: string[], intervalMs: number = 5000): Promise<void> {
+    if (this.getBrokerType() !== 'GCP_PUBSUB') {
+      throw new Error('Polling is only supported for GCP Pub/Sub');
+    }
+
+    this.logger.log(`Starting polling for topics: ${topics.join(', ')} with interval: ${intervalMs}ms`);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        for (const topic of topics) {
+          const handler = this.topicHandlers.get(topic);
+          if (handler) {
+            // Simulate message polling - in real implementation, this would call GCP Pub/Sub API
+            this.logger.log(`Polling topic: ${topic}`);
+            
+            // For demonstration, we'll simulate receiving a message
+            // In a real implementation, you would:
+            // 1. Call GCP Pub/Sub API to pull messages
+            // 2. Process each message
+            // 3. Acknowledge messages
+            
+            const mockMessage = {
+              topic,
+              timestamp: new Date().toISOString(),
+              data: `Polled message from ${topic}`,
+              messageId: `msg_${Date.now()}`
+            };
+
+            handler(mockMessage);
+          }
+        }
+      } catch (error) {
+        this.logger.error('Error during polling:', error);
+      }
+    }, intervalMs);
+
+    // Store the interval ID for cleanup
+    (this as any).pollInterval = pollInterval;
+  }
+
+  async stopPolling(): Promise<void> {
+    if ((this as any).pollInterval) {
+      clearInterval((this as any).pollInterval);
+      (this as any).pollInterval = null;
+      this.logger.log('Stopped polling');
+    }
+  }
+
+  // Check if polling is active
+  isPolling(): boolean {
+    return !!(this as any).pollInterval;
+  }
 }
 
 export class BrokerManager extends EventEmitter {

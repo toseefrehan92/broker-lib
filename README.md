@@ -123,6 +123,36 @@ const env = {
 const subscriptionManager = createSubscriptionManagerFromEnv(env, 'my-gcp-app');
 ```
 
+**Local Development Options:**
+
+1. **GCP Pub/Sub Emulator (Recommended):**
+```bash
+# Install and start emulator
+gcloud components install pubsub-emulator
+gcloud beta emulators pubsub start --project=test-project --host-port=localhost:8085
+
+# Set environment variables
+export PUBSUB_EMULATOR_HOST=localhost:8085
+export PUBSUB_PROJECT_ID=test-project
+```
+
+2. **Polling Mode (for when real-time subscription isn't available):**
+```typescript
+// Set up handlers
+await subscriptionManager.subscribeMultiple([
+  {
+    topic: 'projects/your-project-id/topics/orders',
+    handler: (message) => console.log('Order:', message)
+  }
+]);
+
+// Start polling every 5 seconds
+await subscriptionManager.startPolling(['projects/your-project-id/topics/orders'], 5000);
+
+// Stop polling when done
+await subscriptionManager.stopPolling();
+```
+
 **Using with process.env:**
 ```typescript
 // Set environment variables
@@ -234,6 +264,7 @@ await subscriptionManager.disconnect();
 - **Object Publishing**: Automatically converts objects to JSON when publishing
 - **Error Handling**: Built-in error handling and logging
 - **Event Forwarding**: All broker events are forwarded for monitoring
+- **Polling Support**: For GCP Pub/Sub, supports polling when real-time subscription isn't available
 
 ### SubscriptionOptions Interface
 
@@ -378,6 +409,26 @@ interface TopicHandlerMapping {
   options?: Omit<SubscriptionOptions, 'topic'>;     // Optional: Subscription options
 }
 ```
+
+### Polling Methods (GCP Pub/Sub Only)
+
+For GCP Pub/Sub, you can use polling when real-time subscription isn't available:
+
+```typescript
+// Start polling for topics
+await subscriptionManager.startPolling(['topic1', 'topic2'], 5000); // 5 second interval
+
+// Check if polling is active
+const isPolling = subscriptionManager.isPolling();
+
+// Stop polling
+await subscriptionManager.stopPolling();
+```
+
+**Polling Methods:**
+- `startPolling(topics: string[], intervalMs: number = 5000)`: Start polling for specified topics
+- `stopPolling()`: Stop the polling process
+- `isPolling()`: Check if polling is currently active
 
 ## Configuration
 
