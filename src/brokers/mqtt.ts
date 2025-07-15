@@ -6,6 +6,8 @@ import { EventEmitter } from 'events';
 export class MqttBroker extends EventEmitter implements IBroker {
   private client: MqttClient;
   private connected = false;
+  private messageHandler?: MessageHandler;
+  private subscribedTopics = new Set<string>();
 
   constructor(config: MqttConfig) {
     super();
@@ -49,6 +51,18 @@ export class MqttBroker extends EventEmitter implements IBroker {
 
     this.client.on('reconnect', () => {
       this.emit('reconnect');
+    });
+
+    // Set up a single message handler that uses the stored messageHandler
+    this.client.on('message', async (topic, message) => {
+      if (this.messageHandler) {
+        try {
+          await this.messageHandler(topic, message);
+        } catch (error) {
+          console.error(`Error handling message from topic ${topic}:`, error);
+          this.emit('error', error);
+        }
+      }
     });
   }
 
@@ -104,22 +118,30 @@ export class MqttBroker extends EventEmitter implements IBroker {
         return;
       }
 
-      this.client.on('message', async (topic, message) => {
-        try {
-          await handler(topic, message);
-        } catch (error) {
-          console.error(`Error handling message from topic ${topic}:`, error);
-        }
-      });
+      // Store the message handler
+      this.messageHandler = handler;
+
+      // Subscribe to new topics only
+      const newTopics = topics.filter(topic => !this.subscribedTopics.has(topic));
+      
+      if (newTopics.length === 0) {
+        // All topics are already subscribed, just update the handler
+        resolve();
+        return;
+      }
 
       const subscribeOptions = {
         qos: (options?.qos ?? 0) as 0 | 1 | 2,
       };
 
-      this.client.subscribe(topics, subscribeOptions, (error) => {
+      this.client.subscribe(newTopics, subscribeOptions, (error) => {
         if (error) {
-          reject(new Error(`Failed to subscribe to topics ${topics.join(', ')}: ${error.message}`));
+          reject(new Error(`Failed to subscribe to topics ${newTopics.join(', ')}: ${error.message}`));
         } else {
+          // Add new topics to the subscribed set
+          for (const topic of newTopics) {
+            this.subscribedTopics.add(topic);
+          }
           resolve();
         }
       });

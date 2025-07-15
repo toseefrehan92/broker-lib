@@ -827,6 +827,8 @@ MQTT has a simpler subscription model:
 
 3. **QoS Levels**: MQTT supports different Quality of Service levels (0, 1, 2) for message delivery guarantees.
 
+4. **Message Routing**: The broker-lib properly routes messages to the correct handlers when using `subscribeMultiple()` by maintaining a topic-to-handler mapping and using a unified message handler.
+
 **Example - Multiple MQTT Subscriptions:**
 ```typescript
 const broker = new BrokerManager({
@@ -1050,6 +1052,83 @@ broker.setMessageHandler((topic, message) => {
 // Subscribe without specifying handler (uses default)
 await broker.subscribe(['topic1', 'topic2']);
 ```
+
+## Troubleshooting
+
+### Common Issues
+
+#### MQTT subscribeMultiple Not Working
+
+**Problem**: When using `subscribeMultiple()` with MQTT, handlers are not invoked for messages.
+
+**Solution**: This issue has been fixed in version 1.0.15. The SubscriptionManager now properly:
+- Passes the message handler directly to the broker's subscribe method
+- Ensures the handler is set up before subscription occurs
+- Maintains proper message routing for both single and multiple subscriptions
+
+**Example**:
+```typescript
+const subscriptionManager = createSubscriptionManagerFromEnv({
+  BROKER_TYPE: 'MQTT',
+  MQTT_URL: 'mqtt://localhost:1883'
+});
+
+const topicHandlers = [
+  {
+    topic: 'topic1',
+    handler: (message) => console.log('Topic1:', message)
+  },
+  {
+    topic: 'topic2', 
+    handler: (message) => console.log('Topic2:', message)
+  }
+];
+
+// This now works correctly for MQTT
+await subscriptionManager.subscribeMultiple(topicHandlers);
+```
+
+#### Kafka Consumer Already Running
+
+**Problem**: Error "Cannot subscribe to topic while consumer is running" when trying to subscribe to additional topics.
+
+**Solution**: The library now handles this automatically. When you call `subscribe()` multiple times:
+- The first call starts the consumer
+- Subsequent calls add topics to the existing consumer
+- No manual consumer management is required
+
+#### Connection Issues
+
+**Problem**: Frequent disconnections or connection timeouts.
+
+**Solutions**:
+1. **Enable Reconnection**: The library automatically handles reconnection, but you can configure it:
+   ```typescript
+   broker.setReconnectionConfig({
+     enabled: true,
+     maxAttempts: 10,
+     initialDelay: 1000,
+     maxDelay: 30000,
+     backoffMultiplier: 2
+   });
+   ```
+
+2. **Check Network**: Ensure your broker is accessible and network connectivity is stable.
+
+3. **Verify Configuration**: Double-check broker URLs, credentials, and connection parameters.
+
+#### Message Handler Not Called
+
+**Problem**: Messages are published but handlers are not invoked.
+
+**Solutions**:
+1. **Check Topic Names**: Ensure topic names match exactly (case-sensitive).
+2. **Verify Subscription**: Confirm the subscription was successful.
+3. **Check Message Format**: Ensure messages are in the expected format (JSON for parsed messages).
+4. **Enable Logging**: Use the logger to debug message flow:
+   ```typescript
+   const subscriptionManager = new SubscriptionManager(config, console);
+   ```
 
 ## Development
 

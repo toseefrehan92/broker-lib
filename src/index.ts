@@ -157,8 +157,18 @@ export class SubscriptionManager extends EventEmitter {
       // Store the handler for this topic
       this.topicHandlers.set(options.topic, callback);
 
-      // Set up message handler that routes to the appropriate callback
-      this.brokerManager.setMessageHandler((topic: string, message: Buffer) => {
+      // Use the subscribe method with options
+      const subscribeOptions: SubscribeOptions = {
+        qos: options.qos ?? 1, // Default QoS for MQTT compatibility
+        autoAck: options.autoAck ?? true, // Default auto-ack for GCP PubSub compatibility
+      };
+      
+      if (options.fromBeginning !== undefined) {
+        subscribeOptions.fromBeginning = options.fromBeginning;
+      }
+
+      // Create the message handler that routes to the appropriate callback
+      const messageHandler = (topic: string, message: Buffer) => {
         this.logger.log(`Received message on topic ${topic}: ${message.toString()}`);
         
         const handler = this.topicHandlers.get(topic);
@@ -173,19 +183,9 @@ export class SubscriptionManager extends EventEmitter {
         } else {
           this.logger.warn(`No handler found for topic: ${topic}`);
         }
-      });
-
-      // Use the subscribe method with options
-      const subscribeOptions: SubscribeOptions = {
-        qos: options.qos ?? 1, // Default QoS for MQTT compatibility
-        autoAck: options.autoAck ?? true, // Default auto-ack for GCP PubSub compatibility
       };
-      
-      if (options.fromBeginning !== undefined) {
-        subscribeOptions.fromBeginning = options.fromBeginning;
-      }
 
-      await this.brokerManager.subscribe([options.topic], undefined, subscribeOptions);
+      await this.brokerManager.subscribe([options.topic], messageHandler, subscribeOptions);
       this.logger.log(`Subscribed to topic: ${options.topic}`);
     } catch (error) {
       this.logger.error(`Failed to subscribe to topic: ${options.topic}`, error);
@@ -212,8 +212,15 @@ export class SubscriptionManager extends EventEmitter {
         this.topicHandlers.set(mapping.topic, mapping.handler);
       }
 
-      // Set up message handler that routes to the appropriate callback
-      this.brokerManager.setMessageHandler((topic: string, message: Buffer) => {
+      // Subscribe to all topics
+      const topics = mappings.map(m => m.topic);
+      const defaultOptions: SubscribeOptions = {
+        qos: 1,
+        autoAck: true,
+      };
+
+      // Create the message handler that routes to the appropriate callback
+      const messageHandler = (topic: string, message: Buffer) => {
         this.logger.log(`Received message on topic ${topic}: ${message.toString()}`);
         
         const handler = this.topicHandlers.get(topic);
@@ -228,16 +235,9 @@ export class SubscriptionManager extends EventEmitter {
         } else {
           this.logger.warn(`No handler found for topic: ${topic}`);
         }
-      });
-
-      // Subscribe to all topics
-      const topics = mappings.map(m => m.topic);
-      const defaultOptions: SubscribeOptions = {
-        qos: 1,
-        autoAck: true,
       };
 
-      await this.brokerManager.subscribe(topics, undefined, defaultOptions);
+      await this.brokerManager.subscribe(topics, messageHandler, defaultOptions);
       
       this.logger.log(`Subscribed to ${topics.length} topics: ${topics.join(', ')}`);
     } catch (error) {
