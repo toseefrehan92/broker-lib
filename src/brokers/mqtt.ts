@@ -31,6 +31,9 @@ export class MqttBroker extends EventEmitter implements IBroker {
 
     this.client = mqtt.connect(config.url, options);
 
+    // Increase max listeners to prevent warnings
+    this.client.setMaxListeners(20);
+
     this.client.on('connect', () => {
       this.connected = true;
       this.emit('connect');
@@ -74,18 +77,30 @@ export class MqttBroker extends EventEmitter implements IBroker {
       }
 
       const timeout = setTimeout(() => {
+        // Clean up listeners on timeout
+        this.client.removeAllListeners('connect');
+        this.client.removeAllListeners('error');
         reject(new Error('MQTT connection timeout'));
       }, 30000);
 
-      this.client.once('connect', () => {
+      const connectHandler = () => {
         clearTimeout(timeout);
+        // Clean up listeners on successful connection
+        this.client.removeListener('connect', connectHandler);
+        this.client.removeListener('error', errorHandler);
         resolve();
-      });
+      };
 
-      this.client.once('error', (error) => {
+      const errorHandler = (error: any) => {
         clearTimeout(timeout);
+        // Clean up listeners on error
+        this.client.removeListener('connect', connectHandler);
+        this.client.removeListener('error', errorHandler);
         reject(new Error(`MQTT connection failed: ${error.message}`));
-      });
+      };
+
+      this.client.once('connect', connectHandler);
+      this.client.once('error', errorHandler);
     });
   }
 

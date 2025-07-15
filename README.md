@@ -1130,6 +1130,30 @@ await subscriptionManager.subscribeMultiple(topicHandlers);
    const subscriptionManager = new SubscriptionManager(config, console);
    ```
 
+#### MaxListenersExceededWarning
+
+**Problem**: Node.js warning about too many event listeners on MQTT client.
+
+**Solution**: This issue has been fixed in version 1.0.17. The MQTT broker now:
+- Properly cleans up event listeners after connection attempts
+- Increases the max listeners limit to prevent warnings
+- Uses proper listener management to prevent memory leaks
+
+**Example**:
+```typescript
+// This will no longer cause MaxListenersExceededWarning
+const subscriptionManager = createSubscriptionManagerFromEnv({
+  BROKER_TYPE: 'MQTT',
+  MQTT_URL: 'mqtt://localhost:1883'
+});
+
+// Multiple connection attempts are now safe
+for (let i = 0; i < 10; i++) {
+  await subscriptionManager.connect();
+  await subscriptionManager.disconnect();
+}
+```
+
 ## Development
 
 ### Building
